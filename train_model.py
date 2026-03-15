@@ -94,53 +94,83 @@ def main() -> None:
     print("Cleaning text...")
     X = clean_many(X_raw.tolist())
 
-    # Pipeline
+    # ---------------------------------------------------------------
+    # Train / test split (80/20) for honest hold-out evaluation
+    # ---------------------------------------------------------------
+    from sklearn.model_selection import train_test_split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.20, random_state=42, stratify=y
+    )
+    print(f"Train: {len(X_train)} samples | Test: {len(X_test)} samples")
+
+    # ---------------------------------------------------------------
+    # Pipeline — memory-safe settings
+    #   • unigrams only (ngram_range=(1,1)) keeps the feature matrix small
+    #   • max_features=8_000 caps RAM usage during CV folds
+    # ---------------------------------------------------------------
     pipe = Pipeline([
         ("tfidf", TfidfVectorizer(
             sublinear_tf=True,
             stop_words="english",
-            ngram_range=(1, 2),
-            max_features=15_000,
+            ngram_range=(1, 1),   # unigrams only → much lower memory
+            max_features=8_000,   # safe cap for low-RAM machines
+            dtype=np.float32,     # halves memory vs float64
         )),
         ("clf", LogisticRegression(
             C=1.0,
             max_iter=1000,
             class_weight="balanced",
             random_state=42,
+            solver="saga",        # saga handles sparse matrices efficiently
+            n_jobs=1,             # single thread avoids joblib memory duplication
         )),
     ])
 
-    # Cross-validate
+    # ---------------------------------------------------------------
+    # Cross-validate on training split only
+    #   n_jobs=1  → avoids joblib forking extra copies of the feature matrix
+    # ---------------------------------------------------------------
+    print("Running 5-fold cross-validation (this may take a minute)...")
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    cv_f1 = cross_val_score(pipe, X, y, cv=cv, scoring="f1_macro", n_jobs=-1)
-    print(f"CV F1 (5-fold): {cv_f1.mean():.3f} ± {cv_f1.std():.3f}")
+    cv_f1 = cross_val_score(pipe, X_train, y_train,
+                            cv=cv, scoring="f1_macro", n_jobs=1)
+    print(f"CV F1 (5-fold, train split): {cv_f1.mean():.3f} ± {cv_f1.std():.3f}")
 
-    # Fit
-    pipe.fit(X, y)
+    # ---------------------------------------------------------------
+    # Fit on full training split, evaluate on hold-out test split
+    # ---------------------------------------------------------------
+    print("Fitting final model on training data...")
+    pipe.fit(X_train, y_train)
 
-    # Evaluate on full set (training eval)
-    y_prob = pipe.predict_proba(X)[:, 1]
+    y_prob = pipe.predict_proba(X_test)[:, 1]
     y_pred = (y_prob >= 0.5).astype(int)
 
     metrics = {
-        "accuracy":     float(accuracy_score(y, y_pred)),
-        "roc_auc":      float(roc_auc_score(y, y_prob)),
-        "avg_precision":float(average_precision_score(y, y_prob)),
+        "accuracy":     float(accuracy_score(y_test, y_pred)),
+        "roc_auc":      float(roc_auc_score(y_test, y_prob)),
+        "avg_precision":float(average_precision_score(y_test, y_prob)),
         "cv_f1_mean":   float(cv_f1.mean()),
         "cv_f1_std":    float(cv_f1.std()),
-        "report":       classification_report(y, y_pred, target_names=LABELS, output_dict=True),
+        "report":       classification_report(y_test, y_pred, target_names=LABELS, output_dict=True),
     }
 
     save_json(metrics, outdir / "metrics.json")
     print("Metrics:", json.dumps({k: metrics[k] for k in ["accuracy", "roc_auc"]}, indent=2))
 
     # Charts
-    cm = confusion_matrix(y, y_pred)
+    cm = confusion_matrix(y_test, y_pred)
     plot_confusion_matrix(cm, charts / "confusion_matrix.png")
 
-    fpr, tpr, _ = roc_curve(y, y_prob)
-    fig, ax = plt.subplots(); ax.plot(fpr, tpr); ax.set_title("ROC")
+    fpr, tpr, _ = roc_curve(y_test, y_prob)
+    fig, ax = plt.subplots()
+    ax.plot(fpr, tpr); ax.set_title("ROC Curve"); ax.set_xlabel("FPR"); ax.set_ylabel("TPR")
     fig.savefig(charts / "roc_curve.png", dpi=150); plt.close(fig)
+
+    from sklearn.metrics import precision_recall_curve
+    prec, rec, _ = precision_recall_curve(y_test, y_prob)
+    fig, ax = plt.subplots()
+    ax.plot(rec, prec); ax.set_title("Precision-Recall Curve"); ax.set_xlabel("Recall"); ax.set_ylabel("Precision")
+    fig.savefig(charts / "pr_curve.png", dpi=150); plt.close(fig)
 
     # Save artifacts
     joblib.dump(pipe, outdir / "pipeline.joblib")
