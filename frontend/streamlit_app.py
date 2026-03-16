@@ -118,18 +118,58 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("### 🔑 NewsAPI Key")
-    newsapi_key = st.text_input(
-        "Paste your NewsAPI key (optional)",
-        type="password",
-        placeholder="e.g. abc123...",
-        help="Get a free key at https://newsapi.org/  —  needed for multi-source verification.",
+    st.markdown("### 🔑 News API Key")
+
+    st.markdown(
+        """
+**Supported providers — paste the key only, not the full URL:**
+
+| Provider | Key format | Free tier |
+|----------|-----------|-----------|
+| [NewsData.io](https://newsdata.io/) | `pub_xxxx...` | 200 req/day ✅ |
+| [NewsAPI.org](https://newsapi.org/) | 32 hex chars | Dev only ✅ |
+        """,
     )
+
+    raw_key_input = st.text_input(
+        "Paste your API key here",
+        type="password",
+        placeholder="pub_xxxxx...  OR  abc123def456...",
+        help="NewsData key starts with pub_  |  NewsAPI key is 32 hex characters",
+    )
+
+    # Clean and validate the pasted key
+    newsapi_key = ""
+    if raw_key_input:
+        import re as _re
+        k = raw_key_input.strip().strip('"').strip("'")
+        # If they accidentally pasted a full URL, extract the key param
+        m = _re.search(r"apikey=([^\s&]+)", k, _re.IGNORECASE)
+        if m:
+            k = m.group(1)
+            st.warning("⚠️ Looks like you pasted a full URL. Extracted key: `" + k[:8] + "…`")
+        # Detect provider
+        if k.startswith("pub_"):
+            newsapi_key = k
+            st.success(f"✅ NewsData.io key detected (`pub_...{k[-4:]}`)")
+        elif len(k) == 32 and _re.fullmatch(r"[a-f0-9]{32}", k):
+            newsapi_key = k
+            st.success(f"✅ NewsAPI.org key detected (`...{k[-4:]}`)")
+        elif len(k) > 8:
+            # Accept it anyway but warn
+            newsapi_key = k
+            st.info(f"ℹ️ Key accepted — provider will be auto-detected.")
+        else:
+            st.error("❌ Key too short. Please paste the full API key.")
+
     if not newsapi_key:
-        env_key = os.environ.get("NEWSAPI_KEY", "")
-        if env_key:
-            newsapi_key = env_key
-            st.success("Using NEWSAPI_KEY from environment.")
+        # Try environment variables
+        for env_var in ("NEWSAPI_KEY", "NEWSDATA_KEY"):
+            env_key = os.environ.get(env_var, "")
+            if env_key:
+                newsapi_key = env_key.strip()
+                st.success(f"Using `{env_var}` from environment.")
+                break
 
     st.markdown("---")
     st.markdown("### 🎚️ Settings")
@@ -245,7 +285,7 @@ with col_btn2:
         disabled=not bool(newsapi_key),
     )
     if not newsapi_key:
-        st.caption("⚠️ NewsAPI key required")
+        st.caption("⚠️ News API key required (see sidebar)")
 
 # ---------------------------------------------------------------------------
 # Helper functions
