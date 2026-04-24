@@ -116,12 +116,13 @@ def verify(req: ArticleRequest):
       → source credibility → ML classifier → final score.
     """
     try:
-        _verifier.threshold = req.threshold
         result: VerificationResult = _verifier.verify(
             req.text,
             newsapi_key=req.newsapi_key,
+            threshold=req.threshold,
         )
         return result.to_dict()
     except Exception as exc:
         logger.exception("Verification error")
         raise HTTPException(status_code=500, detail=str(exc))
+

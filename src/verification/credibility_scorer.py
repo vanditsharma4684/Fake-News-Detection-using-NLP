@@ -112,9 +112,11 @@ def credibility_score(url_or_name: str) -> float:
     # Exact match
     if domain in TRUSTED_SOURCES:
         return TRUSTED_SOURCES[domain]
-    # Partial match (e.g. "news.bbc.co.uk" → "bbc.co.uk")
+    # Subdomain match (e.g. "news.bbc.co.uk" → "bbc.co.uk")
+    # Only matches when the input is a subdomain of a known trusted domain,
+    # requiring a dot boundary to prevent "com" matching "reuters.com".
     for known_domain, score in TRUSTED_SOURCES.items():
-        if domain.endswith(known_domain) or known_domain.endswith(domain):
+        if domain.endswith("." + known_domain):
             return score
     return DEFAULT_SCORE
 
