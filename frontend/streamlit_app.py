@@ -215,18 +215,15 @@ if total_w > 0:
 # Load verifier and classifier (cached)
 # ---------------------------------------------------------------------------
 @st.cache_resource(show_spinner="Loading ML model…")
-def load_verifier(w_ml, w_sim, w_cred, threshold, max_sources):
+def load_verifier():
+    # Instance defaults are not used for threshold/weights — those are
+    # passed as per-call keyword args to verify() so the cache never needs
+    # to be invalidated when the user moves a slider.
     from src.verification.fact_verifier import FactVerifier
     return FactVerifier(
         pipeline_path=pipeline_path if pipeline_path.exists() else None,
         model_path=model_path if model_path.exists() else None,
         vectorizer_path=vectorizer_path if vectorizer_path.exists() else None,
-        threshold=threshold,
-        w_ml=w_ml,
-        w_sim=w_sim,
-        w_cred=w_cred,
-        max_sources=max_sources,
-        scrape=False,  # controlled at runtime
     )
 
 @st.cache_resource(show_spinner=False)
@@ -238,7 +235,7 @@ def load_classifier():
         vectorizer_path=vectorizer_path if vectorizer_path.exists() else None,
     )
 
-verifier   = load_verifier(w_ml, w_sim, w_cred, threshold, max_sources)
+verifier   = load_verifier()
 classifier = load_classifier()
 
 # ---------------------------------------------------------------------------
@@ -402,14 +399,19 @@ if run_full and article_text.strip():
 
     with st.spinner("Extracting claims, searching sources, computing similarity…"):
         try:
-            verifier.threshold = threshold
-            verifier.w_ml      = w_ml
-            verifier.w_sim     = w_sim
-            verifier.w_cred    = w_cred
-            verifier.max_sources = max_sources
-            verifier.scrape    = scrape_full
-
-            result = verifier.verify(article_text, newsapi_key=newsapi_key)
+            # Pass all tunable parameters as per-call keyword arguments.
+            # Do NOT mutate verifier.threshold / verifier.w_ml etc. —
+            # that is a race condition when multiple requests run concurrently.
+            result = verifier.verify(
+                article_text,
+                newsapi_key=newsapi_key,
+                threshold=threshold,
+                w_ml=w_ml,
+                w_sim=w_sim,
+                w_cred=w_cred,
+                max_sources=max_sources,
+                scrape=scrape_full,
+            )
 
         except Exception as exc:
             st.error(f"Verification failed: {exc}")

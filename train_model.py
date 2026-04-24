@@ -90,9 +90,9 @@ def main() -> None:
     X_raw = pd.concat([df_real["combined"], df_fake["combined"]], ignore_index=True)
     y     = np.array([0] * len(df_real) + [1] * len(df_fake))
 
-    # Clean
+    # Clean (crucial: strip source markers to prevent data leakage)
     print("Cleaning text...")
-    X = clean_many(X_raw.tolist())
+    X = clean_many(X_raw.tolist(), strip_sources=True)
 
     # ---------------------------------------------------------------
     # Train / test split (80/20) for honest hold-out evaluation
@@ -105,15 +105,15 @@ def main() -> None:
 
     # ---------------------------------------------------------------
     # Pipeline — memory-safe settings
-    #   • unigrams only (ngram_range=(1,1)) keeps the feature matrix small
-    #   • max_features=8_000 caps RAM usage during CV folds
+    #   • unigrams + bigrams (1, 2) captures phrases like "sources say"
+    #   • max_features=15_000 caps RAM usage while allowing bigrams
     # ---------------------------------------------------------------
     pipe = Pipeline([
         ("tfidf", TfidfVectorizer(
             sublinear_tf=True,
             stop_words="english",
-            ngram_range=(1, 1),   # unigrams only → much lower memory
-            max_features=8_000,   # safe cap for low-RAM machines
+            ngram_range=(1, 2),   # unigrams + bigrams
+            max_features=15_000,  # safe cap for low-RAM machines
             dtype=np.float32,     # halves memory vs float64
         )),
         ("clf", LogisticRegression(
@@ -121,8 +121,7 @@ def main() -> None:
             max_iter=1000,
             class_weight="balanced",
             random_state=42,
-            solver="saga",        # saga handles sparse matrices efficiently
-            n_jobs=1,             # single thread avoids joblib memory duplication
+            solver="saga",        # efficient on sparse matrices; single-threaded by design
         )),
     ])
 
